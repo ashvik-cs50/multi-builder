@@ -137,7 +137,6 @@
             voxel.position.set(x + 0.5, y + 0.5, z + 0.5);
             voxel.castShadow = true;
             voxel.receiveShadow = true;
-            voxel.userData.isVoxel = true;
             scene.add(voxel);
             blocks.set(key, voxel);
         }
@@ -168,7 +167,7 @@
             if (!controls.isLocked) return;
 
             raycaster.setFromCamera(mouse, camera);
-            const intersects = raycaster.intersectObjects(scene.children);
+            const intersects = raycaster.intersectObjects(scene.children.filter(obj => obj.type === 'Mesh' && obj !== ground));
 
             if (intersects.length > 0) {
                 const intersect = intersects[0];
@@ -181,7 +180,7 @@
                     addVoxel(x, y, z, currentBlockType);
                 } else if (event.button === 2) { // Remove
                     const obj = intersect.object;
-                    if (obj.userData && obj.userData.isVoxel) {
+                    if (obj.userData.isVoxel) { // We'll set this
                         const pos = obj.position;
                         const key = getBlockKey(pos.x - 0.5, pos.y - 0.5, pos.z - 0.5);
                         scene.remove(obj);
