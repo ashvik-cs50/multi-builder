@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Multi Builder - 3D Voxel Game</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: Arial, sans-serif; }
+        #instructions {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: white; background: rgba(0,0,0,0.8); padding: 30px; border-radius: 12px;
+            text-align: center; pointer-events: none; z-index: 100;
+        }
+        #hud {
+            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+            color: white; background: rgba(0,0,0,0.6); padding: 12px 24px; border-radius: 8px;
+            font-size: 18px; z-index: 100;
+        }
+        #crosshair {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: white; font-size: 30px; pointer-events: none; z-index: 50;
+            text-shadow: 0 0 5px black;
+        }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <div id="instructions">
+        <h1>🌍 Multi Builder</h1>
+        <p><strong>Click to start</strong></p>
+        <p>WASD - Move | Mouse - Look around</p>
+        <p>Space - Fly Up | Shift - Fly Down</p>
+        <p>Left Click - Place Block | Right Click - Remove Block</p>
+        <p>1-9 - Select Block Type</p>
+        <p>ESC - Release Mouse</p>
+    </div>
+    <div id="crosshair">+</div>
+    <div id="hud">Block: <span id="blockType">Grass</span></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.134.0/examples/js/controls/PointerLockControls.js"></script>
+
+    <script>
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87ceeb);
+        scene.fog = new THREE.Fog(0x87ceeb, 80, 400);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+        dirLight.position.set(50, 100, 40);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        scene.add(dirLight);
+
+        // Controls
+        const controls = new THREE.PointerLockControls(camera, document.body);
+        let isLocked = false;
+
+        document.addEventListener('click', () => {
+            if (!controls.isLocked) controls.lock();
+        });
+
+        controls.addEventListener('lock', () => {
+            isLocked = true;
+            document.getElementById('instructions').style.display = 'none';
+        });
+        controls.addEventListener('unlock', () => {
+            isLocked = false;
+            document.getElementById('instructions').style.display = 'block';
+        });
+
+        // Movement
+        const velocity = new THREE.Vector3();
+        const direction = new THREE.Vector3();
+        let moveState = { forward: false, backward: false, left: false, right: false, up: false, down: false };
+
+        document.addEventListener('keydown', (e) => {
+            switch (e.code) {
+                case 'KeyW': moveState.forward = true; break;
+                case 'KeyS': moveState.backward = true; break;
+                case 'KeyA': moveState.left = true; break;
+                case 'KeyD': moveState.right = true; break;
+                case 'Space': moveState.up = true; break;
+                case 'ShiftLeft':
+                case 'ShiftRight': moveState.down = true; break;
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            switch (e.code) {
+                case 'KeyW': moveState.forward = false; break;
+                case 'KeyS': moveState.backward = false; break;
+                case 'KeyA': moveState.left = false; break;
+                case 'KeyD': moveState.right = false; break;
+                case 'Space': moveState.up = false; break;
+                case 'ShiftLeft':
+                case 'ShiftRight': moveState.down = false; break;
+            }
+        });
+
+        // Voxel world
+        const blockSize = 1;
+        const blocks = new Map(); // "x,y,z" -> mesh
+        const blockMaterials = [
+            new THREE.MeshLambertMaterial({ color: 0x00cc00 }), // 0 Grass
+            new THREE.MeshLambertMaterial({ color: 0x777777 }), // 1 Stone
+            new THREE.MeshLambertMaterial({ color: 0xa0522d }), // 2 Wood
+            new THREE.MeshLambertMaterial({ color: 0xb22222 }), // 3 Brick
+            new THREE.MeshLambertMaterial({ color: 0x88ccff, transparent: true, opacity: 0.65 }), // 4 Glass
+            new THREE.MeshLambertMaterial({ color: 0xffd700 }), // 5 Gold
+            new THREE.MeshLambertMaterial({ color: 0x9932cc }), // 6 Purple
+            new THREE.MeshLambertMaterial({ color: 0x00ffff }), // 7 Cyan
+            new THREE.MeshLambertMaterial({ color: 0xeeeeee })  // 8 White
+        ];
+        let currentBlockType = 0;
+
+        function getBlockKey(x, y, z) {
+            return `${Math.floor(x)},${Math.floor(y)},${Math.floor(z)}`;
+        }
+
+        function addVoxel(x, y, z, type = 0) {
+            const key = getBlockKey(x, y, z);
+            if (blocks.has(key)) return;
+
+            const geometry = new THREE.BoxGeometry(blockSize, blockSize, blockSize);
+            const material = blockMaterials[type];
+            const voxel = new THREE.Mesh(geometry, material);
+            voxel.position.set(x + 0.5, y + 0.5, z + 0.5);
+            voxel.castShadow = true;
+            voxel.receiveShadow = true;
+            voxel.userData.isVoxel = true;
+            scene.add(voxel);
+            blocks.set(key, voxel);
+        }
+
+        // Ground
+        const groundSize = 100;
+        for (let x = -groundSize; x < groundSize; x += 2) {
+            for (let z = -groundSize; z < groundSize; z += 2) {
+                addVoxel(x, -2, z, 1); // Stone base
+            }
+        }
+        for (let x = -20; x <= 20; x++) {
+            for (let z = -20; z <= 20; z++) {
+                addVoxel(x, -1, z, 0); // Grass layer
+            }
+        }
+
+        // Starting structures
+        for (let i = 0; i < 5; i++) {
+            addVoxel(5 + i, 0, 5, 2);
+        }
+
+        // Raycaster
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        function handleClick(event) {
+            if (!controls.isLocked) return;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(scene.children);
+
+            if (intersects.length > 0) {
+                const intersect = intersects[0];
+                if (event.button === 0) { // Place
+                    const normal = intersect.face.normal;
+                    const placePos = intersect.point.clone().add(normal.multiplyScalar(0.501));
+                    const x = Math.floor(placePos.x);
+                    const y = Math.floor(placePos.y);
+                    const z = Math.floor(placePos.z);
+                    addVoxel(x, y, z, currentBlockType);
+                } else if (event.button === 2) { // Remove
+                    const obj = intersect.object;
+                    if (obj.userData && obj.userData.isVoxel) {
+                        const pos = obj.position;
+                        const key = getBlockKey(pos.x - 0.5, pos.y - 0.5, pos.z - 0.5);
+                        scene.remove(obj);
+                        blocks.delete(key);
+                    }
+                }
+            }
+        }
+
+        document.addEventListener('mousedown', handleClick);
+        document.addEventListener('contextmenu', e => e.preventDefault());
+
+        // Block selector
+        document.addEventListener('keydown', (e) => {
+            if (e.key >= '1' && e.key <= '9') {
+                currentBlockType = parseInt(e.key) - 1;
+                document.getElementById('blockType').textContent = ['Grass','Stone','Wood','Brick','Glass','Gold','Purple','Cyan','White'][currentBlockType];
+            }
+        });
+
+        // Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Camera position
+        camera.position.set(8, 8, 20);
+
+        // Animation loop
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = Math.min(clock.getDelta(), 0.1);
+
+            if (controls.isLocked) {
+                const speed = 25 * delta;
+
+                controls.getDirection(direction);
+
+                if (moveState.forward) camera.position.addScaledVector(direction, speed);
+                if (moveState.backward) camera.position.addScaledVector(direction, -speed);
+
+                const right = new THREE.Vector3().crossVectors(direction, new THREE.Vector3(0, 1, 0)).normalize();
+                if (moveState.left) camera.position.addScaledVector(right, -speed);
+                if (moveState.right) camera.position.addScaledVector(right, speed);
+
+                if (moveState.up) camera.position.y += speed * 2;
+                if (moveState.down) camera.position.y -= speed * 2;
+            }
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        console.log("%c🎮 Multi Builder loaded! Click screen to play.", "color:#0f0;font-size:16px");
+    </script>
+</body>
+</html>
